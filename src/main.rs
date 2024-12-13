@@ -4,51 +4,86 @@ use clipboard_rs::{common::RustImage, Clipboard, ClipboardContext, ContentFormat
 use std::{
     fs::{self},
     path::{Path, PathBuf},
+    process::exit,
 };
 
 use arguments::Arguments;
 use clap::Parser;
+
+enum ClipType {
+    ImageOrFile(Vec<PathBuf>),
+    Other,
+}
 
 fn timestamp() -> String {
     let date = chrono::Local::now();
     date.format("%y%m-%d-%H%M%S").to_string()
 }
 
-fn read_and_save(args: &Arguments) -> anyhow::Result<Vec<PathBuf>> {
+fn read_and_save(args: &Arguments) -> anyhow::Result<ClipType> {
     let ctx = ClipboardContext::new().unwrap();
     let mut paths = vec![];
-    if let Ok(img) = ctx.get_image() {
-        let file_path = build_filepath(args, None::<String>);
-        match img.save_to_path(file_path.to_string_lossy().as_ref()) {
-            Ok(_) => {
-                paths.push(file_path);
-            }
-            Err(error) => Err(anyhow::anyhow!(error.to_string()))?,
-        }
-    } else if let Ok(text) = ctx.get_text() {
-        let text_str = text.as_str();
-        if PathBuf::from(text_str).exists() {
-            if let Ok(Some(_)) = imghdr::from_file(text_str) {
-                let filepath = build_filepath(args, Some(text_str));
-                std::fs::copy(text_str, &filepath)?;
-                paths.push(filepath);
-            }
-        }
-    } else if let Ok(files) = ctx.get(&[ContentFormat::Files]) {
-        for clip_content in files {
-            if let clipboard_rs::ClipboardContent::Files(files) = clip_content {
-                for file in files {
-                    if let Ok(Some(_)) = imghdr::from_file(&file) {
-                        let p = PathBuf::from(file);
-                        let filepath = build_filepath(args, Some(p.to_path_buf()));
-                        std::fs::copy(p, &filepath)?;
+    let mut img_or_file = false;
+    let only_image = args.only_img.unwrap_or(false);
+    fn should_save(line: &str, only_image: bool) -> bool {
+        !only_image || (only_image && imghdr::from_file(&line).is_ok_and(|e| e.is_some()))
+    }
+
+    let mut handle_text = || -> anyhow::Result<()> {
+        if let Ok(text) = ctx.get_text() {
+            if args.parse_text.unwrap_or(false) {
+                for line in text.split("\n") {
+                    if PathBuf::from(line).exists() {
+                        let line = line.trim();
+
+                        if should_save(line, only_image) {
+                            img_or_file = true;
+                            let filepath = build_filepath(args, Some(line));
+                            std::fs::copy(line, &filepath)?;
+                            paths.push(filepath);
+                        }
                     }
                 }
             }
         }
+        Ok(())
+    };
+
+    if let Ok(img) = ctx.get_image() {
+        let file_path = build_filepath(args, None::<String>);
+        match img.save_to_path(file_path.to_string_lossy().as_ref()) {
+            Ok(_) => {
+                img_or_file = true;
+                paths.push(file_path);
+            }
+            Err(error) => Err(anyhow::anyhow!(error.to_string()))?,
+        }
+    } else if let Ok(files) = ctx.get(&[ContentFormat::Files]) {
+        if files.is_empty() {
+            handle_text()?;
+        } else {
+            img_or_file = true;
+            for clip_content in files {
+                if let clipboard_rs::ClipboardContent::Files(files) = clip_content {
+                    for file in files {
+                        if should_save(&file, only_image) {
+                            let p = PathBuf::from(&file);
+                            let filepath = build_filepath(args, Some(p.to_path_buf()));
+                            std::fs::copy(p, &filepath)?;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        handle_text()?;
     }
 
-    Ok(paths)
+    if img_or_file {
+        Ok(ClipType::ImageOrFile(paths))
+    } else {
+        Ok(ClipType::Other)
+    }
 }
 
 fn diff_wrapper(args: &Arguments, filepath: impl AsRef<Path>) -> String {
@@ -110,12 +145,18 @@ fn main() {
     if !dir_path.exists() {
         fs::create_dir_all(dir_path).unwrap();
     }
-
     if let Ok(paths) = read_and_save(&args) {
-        for filepath in paths {
-            if is_img_file(&filepath) {
-                println!("{}", diff_wrapper(&args, filepath))
+        match paths {
+            ClipType::ImageOrFile(paths) => {
+                for filepath in paths {
+                    if is_img_file(&filepath) {
+                        println!("{}", diff_wrapper(&args, filepath))
+                    }
+                }
             }
+            ClipType::Other => exit(59),
         }
+    } else {
+        exit(59);
     }
 }

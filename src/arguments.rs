@@ -11,5 +11,9 @@ pub struct Arguments {
     #[clap(long, help = "Name file with timestamp")]
     pub timestamp: Option<bool>,
     #[clap(long, help = "base dir")]
-    pub base_dir: Option<String>
+    pub base_dir: Option<String>,
+    #[clap(long, help = "parse text into file")]
+    pub parse_text: Option<bool>,
+    #[clap(long, help = "only image save, default false")]
+    pub only_img: Option<bool>,
 }
