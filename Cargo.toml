@@ -1,0 +1,16 @@
+[package]
+name = "clip2file"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.94"
+chrono = { version = "0.4.39", default-features = false, features=["clock"] }
+clap = { version = "4.5.23", features = ["derive"] }
+clipboard-rs = "0.2.2"
+imghdr = { version = "0.7.0" }
+pathdiff = "0.2.3"
+
+[profile.release]
+strip = true
+lto = true
